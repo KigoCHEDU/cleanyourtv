@@ -80,6 +80,9 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         int ambient;
         /** uniform_tiles card fill, top and bottom colour; null until sampled from the icon. */
         int[] backdrop;
+        /** The app's full banner for the shelf backdrop when the tile itself draws only the icon; loaded on first focus. */
+        Drawable art;
+        boolean artLoaded;
 
         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
             this(APP, label, component, banner, icon, null, 0);
@@ -218,6 +221,35 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final Map<String, String> appLabels, appBanners;
     /** Every app tile is its icon on a card tinted from that icon, never its banner (config.xml, uniform_tiles). */
     private final boolean uniformTiles;
+    /** iOS-style icon look for icon tiles: tinted (card from the icon's colour), clear (frosted glass, monochrome
+     *  mark) or dark (graphite card); "default" keeps each app's banner. */
+    private final String tileStyle;
+    /** A "Launcher settings" tile as the last app. */
+    private final boolean launcherSettingsTile;
+    private static final android.graphics.ColorMatrixColorFilter CLEAR_ICON_FILTER;
+    static {
+        android.graphics.ColorMatrix m = new android.graphics.ColorMatrix();
+        m.setSaturation(0f);
+        // Lift the grey toward white, as iOS's clear icons read as light etched glass.
+        android.graphics.ColorMatrix lift = new android.graphics.ColorMatrix(new float[]{
+                0.55f, 0, 0, 0, 115,
+                0, 0.55f, 0, 0, 115,
+                0, 0, 0.55f, 0, 115,
+                0, 0, 0, 0.92f, 0});
+        m.postConcat(lift);
+        CLEAR_ICON_FILTER = new android.graphics.ColorMatrixColorFilter(m);
+    }
+
+    /** The card fill for the clear and dark looks: a translucent or graphite slab with a fine light rim. */
+    private Drawable glassCard(boolean clear, int widthPx) {
+        float density = ctx.getResources().getDisplayMetrics().density;
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, clear
+                ? new int[]{0x40FFFFFF, 0x1AFFFFFF}
+                : new int[]{0xF02C2C2E, 0xF01C1C1E});
+        g.setCornerRadius(cornerRadius(widthPx, density));
+        g.setStroke(Math.max(1, Math.round(density)), clear ? 0x66FFFFFF : 0x33FFFFFF);
+        return g;
+    }
     /** Packages drawn from their icon and name even when they have a banner (config.xml icon_tiles). */
     private final Set<String> iconTiles;
     private final List<Entry> items = new ArrayList<>();
@@ -233,6 +265,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.animations = cfg.animations;
         this.advancedEffects = cfg.animations && cfg.advancedEffects;
         this.showHomeSettings = cfg.showHomeSettingsShortcut;
+        this.launcherSettingsTile = cfg.launcherSettingsTile;
         this.showLibrary = LibraryApps.showPill(cfg.appLibrary, cfg.libraryButton, cfg.showLibraryPill);
         this.reducedMotion = cfg.reducedMotion;
         this.focusOvershoot = cfg.focusOvershoot;
@@ -247,7 +280,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.tileMenu = cfg.tileMenu;
         this.appLabels = cfg.appLabels;
         this.appBanners = cfg.appBanners;
-        this.uniformTiles = cfg.uniformTiles;
+        String style = cfg.tileStyle;
+        if ("default".equals(style) && cfg.uniformTiles) style = "tinted";
+        this.tileStyle = style;
+        this.uniformTiles = !"default".equals(style);
         // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
         // its view being rebound to whatever app now sits in that slot.
         setHasStableIds(true);
@@ -332,6 +368,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             fresh.add(new Entry(Entry.HOME_SETTINGS, ctx.getString(R.string.home_settings),
                     new ComponentName(ctx, HomeSettingsActivity.class), null,
                     ctx.getDrawable(R.drawable.ic_home_settings), null, 0));
+        }
+        if (launcherSettingsTile && !showHomeSettings) {
+            fresh.add(new Entry(Entry.HOME_SETTINGS, ctx.getString(R.string.launcher_settings),
+                    new ComponentName(ctx, LauncherSettingsActivity.class), null,
+                    ctx.getDrawable(R.drawable.ic_settings), null, 0));
         }
         docked = 0;
         while (docked < fresh.size() && isDocked(fresh.get(docked))) docked++;
@@ -492,9 +533,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         // nothing on every frame; keep it under banners with transparent parts and under icon tiles.
         h.card.setBackground(e.banner != null && e.banner.getOpacity() == PixelFormat.OPAQUE ? null : h.cardBackground);
         if (uniformTiles && e.banner == null) {
-            if (e.backdrop == null) e.backdrop = backdrop(e.icon, ambientColorAt(position));
-            h.card.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, e.backdrop));
+            if ("clear".equals(tileStyle) || "dark".equals(tileStyle)) {
+                h.card.setBackground(glassCard("clear".equals(tileStyle), h.card.getLayoutParams().width > 0
+                        ? h.card.getLayoutParams().width : h.card.getWidth()));
+            } else {
+                if (e.backdrop == null) e.backdrop = backdrop(e.icon, ambientColorAt(position));
+                h.card.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, e.backdrop));
+            }
         }
+        h.icon.setColorFilter("clear".equals(tileStyle) && e.banner == null ? CLEAR_ICON_FILTER : null);
         if (e.banner != null) {
             h.icon.setImageDrawable(null);
             h.banner.setImageDrawable(e.banner);
@@ -530,7 +577,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     @SuppressWarnings("deprecation")
     private void launch(Entry e) {
         if (e.kind == Entry.HOME_SETTINGS) {
-            ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
+            ctx.startActivity(new Intent().setComponent(e.component)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             return;
         }
@@ -673,7 +720,25 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     Drawable artworkAt(int position) {
         if (position < 0 || position >= items.size()) return null;
         Entry e = items.get(position);
-        return e.banner != null ? e.banner : e.icon;
+        if (e.kind == Entry.HOME_SETTINGS) return null;
+        if (e.banner != null) return e.banner;
+        // Icon tiles (tile_style tinted/clear/dark) never load the banner; fetch it once for the backdrop so the
+        // shelf shows the app's real artwork and colours, not a blur of its small icon.
+        if (!e.artLoaded && e.kind == Entry.APP) {
+            e.artLoaded = true;
+            PackageManager pm = ctx.getPackageManager();
+            try {
+                e.art = pm.getActivityBanner(e.component);
+            } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
+            }
+            if (e.art == null) {
+                try {
+                    e.art = pm.getApplicationBanner(e.pkg);
+                } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
+                }
+            }
+        }
+        return e.art != null ? e.art : e.icon;
     }
 
     float focusScale() {

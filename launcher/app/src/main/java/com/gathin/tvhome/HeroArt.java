@@ -13,8 +13,8 @@ import android.graphics.drawable.Drawable;
  * which a 1 GB TV cannot spare.
  */
 final class HeroArt {
-    static final int W = 48, H = 27;
-    private static final float SATURATION = 1.7f;
+    static final int W = 128, H = 72;
+    private static final float SATURATION = 1.25f;
 
     private HeroArt() {
     }
@@ -41,9 +41,9 @@ final class HeroArt {
         small.getPixels(px, 0, W, 0, 0, W, H);
         saturate(px);
         // Three box passes approximate a gaussian, so the stretched image shows no seams between pixels.
-        for (int pass = 0; pass < 3; pass++) {
-            px = boxBlur(px, W, H, 2, true);
-            px = boxBlur(px, W, H, 2, false);
+        for (int pass = 0; pass < 1; pass++) {
+            px = boxBlur(px, W, H, 1, true);
+            px = boxBlur(px, W, H, 1, false);
         }
         Bitmap out = small.isMutable() ? small : small.copy(Bitmap.Config.ARGB_8888, true);
         if (out != small) small.recycle();

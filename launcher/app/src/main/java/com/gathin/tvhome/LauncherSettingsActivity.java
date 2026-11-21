@@ -28,7 +28,21 @@ public final class LauncherSettingsActivity extends Activity {
 
     static final String EXTRA_REORDER = "com.gathin.tvhome.extra.REORDER_FROM_SETTINGS";
     private SharedPreferences choices;
-    private final TextView[] columnChoices = new TextView[4];
+    private final TextView[] columnChoices = new TextView[5];
+    private final TextView[] styleChoices = new TextView[Config.TILE_STYLES.length];
+    private String tileStyle;
+    private TextView namesChoice;
+    private boolean names;
+    private boolean fixedDock;
+    private String backdrop;
+    private final TextView[] backdropChoices = new TextView[2];
+    private static final int PICK_PICTURE_REQUEST = 41;
+    private final TextView[] dockModeChoices = new TextView[2];
+    /** The choices as they were when this screen opened; put back unless Save is pressed. */
+    private java.util.Map<String, ?> snapshot;
+    private boolean saved;
+    /** A settings page opened from here (Default home, TV settings): leaving for it is not leaving unsaved. */
+    private boolean openingPage;
     private final TextView[] rowChoices = new TextView[4];
     private static final int[] DOCK_OPACITIES = {100, 70, 50, 30};
     private final TextView[] dockChoices = new TextView[DOCK_OPACITIES.length];
@@ -62,10 +76,15 @@ public final class LauncherSettingsActivity extends Activity {
         rowsBelowDock = config.rowsBelowDock;
         dockOpacity = config.dockOpacity;
         clockFormat = config.clockFormat;
+        tileStyle = config.tileStyle;
+        names = config.alwaysShowNames;
+        fixedDock = config.singleRow;
+        backdrop = choices.getString(Config.BACKDROP_KEY, "app");
+        snapshot = new java.util.HashMap<>(choices.getAll());
         animations = config.animations;
         advancedEffects = config.animations && config.advancedEffects;
 
-        int[] ids = {R.id.columns4, R.id.columns5, R.id.columns6, R.id.columns7};
+        int[] ids = {R.id.columns4, R.id.columns5, R.id.columns6, R.id.columns7, R.id.columns8};
         for (int i = 0; i < ids.length; i++) {
             final int value = i + 4;
             columnChoices[i] = findViewById(ids[i]);
@@ -113,6 +132,18 @@ public final class LauncherSettingsActivity extends Activity {
                 refresh();
             });
         }
+        int[] styleIds = {R.id.styleDefault, R.id.styleTinted, R.id.styleClear, R.id.styleDark};
+        for (int i = 0; i < styleIds.length; i++) {
+            final String value = Config.TILE_STYLES[i];
+            styleChoices[i] = findViewById(styleIds[i]);
+            styleChoices[i].setOnClickListener(v -> {
+                if (value.equals(tileStyle)) return;
+                tileStyle = value;
+                choices.edit().putString(Config.TILE_STYLE_KEY, value).apply();
+                changed();
+                refresh();
+            });
+        }
         // Mirror text alignment without globally opting the launcher into RTL. Numeric rows
         // still need explicit ordering in Android's no-supportsRtl compatibility mode.
         if (getResources().getBoolean(R.bool.rtl_menu_bar))
@@ -122,7 +153,47 @@ public final class LauncherSettingsActivity extends Activity {
             reverseRow(rowChoices);
             reverseRow(dockChoices);
             reverseRow(clockChoices);
+            reverseRow(styleChoices);
         }
+        int[] dockModeIds = {R.id.dockFixed, R.id.dockScroll};
+        for (int i = 0; i < dockModeIds.length; i++) {
+            final boolean value = i == 0;
+            dockModeChoices[i] = findViewById(dockModeIds[i]);
+            dockModeChoices[i].setOnClickListener(v -> {
+                if (fixedDock == value) return;
+                fixedDock = value;
+                choices.edit().putBoolean(Config.FIXED_DOCK_KEY, value).apply();
+                changed();
+                refresh();
+            });
+        }
+        int[] backdropIds = {R.id.backdropApp, R.id.backdropWallpaper};
+        for (int i = 0; i < backdropIds.length; i++) {
+            final String value = i == 0 ? "app" : "wallpaper";
+            backdropChoices[i] = findViewById(backdropIds[i]);
+            backdropChoices[i].setOnClickListener(v -> {
+                if (!value.equals(backdrop)) {
+                    backdrop = value;
+                    choices.edit().putString(Config.BACKDROP_KEY, value).apply();
+                    changed();
+                    refresh();
+                }
+                if ("wallpaper".equals(value)) showWallpaperSources();
+            });
+        }
+        findViewById(R.id.saveChoice).setOnClickListener(v -> {
+            saved = true;
+            setResult(RESULT_OK);
+            Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show();
+            finish();
+        });
+        namesChoice = findViewById(R.id.namesChoice);
+        namesChoice.setOnClickListener(v -> {
+            names = !names;
+            choices.edit().putBoolean(Config.NAMES_KEY, names).apply();
+            changed();
+            refresh();
+        });
         wallpaperChoice = findViewById(R.id.wallpaperChoice);
         wallpaperChoice.setOnClickListener(v -> showWallpaperPicker());
         animationsChoice = findViewById(R.id.animationsChoice);
@@ -157,12 +228,16 @@ public final class LauncherSettingsActivity extends Activity {
             if (!hasOnTvChoices()) return;
             choices.edit().remove("columns").remove(Config.ROWS_BELOW_DOCK_KEY).remove("animations")
                     .remove("advanced_effects").remove(Config.WALLPAPER_CHOICE_KEY)
-                    .remove(Config.DOCK_OPACITY_KEY).remove(Config.CLOCK_FORMAT_KEY).remove(OpenOnStart.KEY).commit();
+                    .remove(Config.DOCK_OPACITY_KEY).remove(Config.CLOCK_FORMAT_KEY).remove(Config.TILE_STYLE_KEY).remove(Config.NAMES_KEY).remove(OpenOnStart.KEY).commit();
             Config current = Config.load(this);
             columns = current.columns;
             rowsBelowDock = current.rowsBelowDock;
             dockOpacity = current.dockOpacity;
             clockFormat = current.clockFormat;
+            tileStyle = current.tileStyle;
+            names = current.alwaysShowNames;
+            fixedDock = current.singleRow;
+            backdrop = "app";
             animations = current.animations;
             advancedEffects = current.animations && current.advancedEffects;
             changed();
@@ -174,7 +249,7 @@ public final class LauncherSettingsActivity extends Activity {
                 open(SystemSettings.intent(this, Settings.ACTION_SETTINGS)));
         refresh();
         if (config.launcherSettingsButton) reorderChoice.requestFocus();
-        else columnChoices[Math.max(0, Math.min(columns - 4, 3))].requestFocus();
+        else columnChoices[Math.max(0, Math.min(columns - 4, 4))].requestFocus();
     }
 
     private void reverseRow(TextView[] views) {
@@ -203,7 +278,8 @@ public final class LauncherSettingsActivity extends Activity {
                     if (which == images.size()) {
                         choices.edit().putString(Config.WALLPAPER_CHOICE_KEY, "none").apply();
                     } else {
-                        choices.edit().putString(Config.WALLPAPER_CHOICE_KEY,
+                        backdrop = "wallpaper";
+                                choices.edit().putString(Config.BACKDROP_KEY, backdrop).putString(Config.WALLPAPER_CHOICE_KEY,
                                 images.get(which).getName()).apply();
                     }
                     changed();
@@ -217,6 +293,73 @@ public final class LauncherSettingsActivity extends Activity {
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    /**
+     * Where a custom wallpaper comes from: the TV's wallpaper collection, a picture already on the TV (Downloads, a USB
+     * drive) through Android's photo picker, or Google Images / Google Drive in the TV's browser, to save a picture
+     * that the photo picker then offers. The launcher itself never goes online.
+     */
+    private void showWallpaperSources() {
+        String[] items = {getString(R.string.wp_tv_wallpapers), getString(R.string.wp_pictures),
+                getString(R.string.wp_google_images), getString(R.string.wp_google_drive)};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.wp_sources_title)
+                .setItems(items, (dialog, which) -> {
+                    if (which == 0) showWallpaperPicker();
+                    else if (which == 1) pickPicture();
+                    else openWeb(which == 2 ? "https://images.google.com" : "https://drive.google.com");
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void pickPicture() {
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            openingPage = true;
+            startActivityForResult(pick, PICK_PICTURE_REQUEST);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            openingPage = false;
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openWeb(String url) {
+        Toast.makeText(this, R.string.wp_web_hint, Toast.LENGTH_LONG).show();
+        open(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+    }
+
+    /** Copies the picked picture into the wallpapers collection and makes it the wallpaper. */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_PICTURE_REQUEST || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        File dir = Config.dir(this);
+        if (dir == null) {
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_LONG).show();
+            return;
+        }
+        File folder = new File(dir, "wallpapers");
+        if (!folder.isDirectory() && !folder.mkdirs()) return;
+        String name = "picked-" + System.currentTimeMillis() + ".jpg";
+        File out = new File(folder, name);
+        try (java.io.InputStream in = getContentResolver().openInputStream(data.getData());
+             java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+            if (in == null) throw new java.io.IOException("no stream");
+            byte[] buf = new byte[64 * 1024];
+            for (int n; (n = in.read(buf)) > 0; ) os.write(buf, 0, n);
+        } catch (java.io.IOException | RuntimeException e) {
+            //noinspection ResultOfMethodCallIgnored
+            out.delete();
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_LONG).show();
+            return;
+        }
+        backdrop = "wallpaper";
+        choices.edit().putString(Config.BACKDROP_KEY, backdrop).putString(Config.WALLPAPER_CHOICE_KEY, name).apply();
+        changed();
+        Toast.makeText(this, R.string.wallpaper_applied, Toast.LENGTH_SHORT).show();
+        refresh();
     }
 
     /** Off, then every app with a TV entry point by name. Saved at once; it is read on the next boot. */
@@ -302,9 +445,17 @@ public final class LauncherSettingsActivity extends Activity {
         for (int i = 0; i < dockChoices.length; i++) {
             dockChoices[i].setSelected(dockOpacity == DOCK_OPACITIES[i]);
         }
+        for (int i = 0; i < styleChoices.length; i++) {
+            styleChoices[i].setSelected(Config.TILE_STYLES[i].equals(tileStyle));
+        }
         for (int i = 0; i < clockChoices.length; i++) {
             clockChoices[i].setSelected(CLOCK_FORMATS[i].equals(clockFormat));
         }
+        backdropChoices[0].setSelected(!"wallpaper".equals(backdrop));
+        backdropChoices[1].setSelected("wallpaper".equals(backdrop));
+        dockModeChoices[0].setSelected(fixedDock);
+        dockModeChoices[1].setSelected(!fixedDock);
+        namesChoice.setText(getString(R.string.names_state, getString(names ? R.string.on : R.string.off)));
         animationsChoice.setText(getString(R.string.animations_state,
                 getString(animations ? R.string.on : R.string.off)));
         advancedChoice.setText(getString(R.string.advanced_effects_state,
@@ -324,14 +475,44 @@ public final class LauncherSettingsActivity extends Activity {
         return choices.contains("columns") || choices.contains(Config.ROWS_BELOW_DOCK_KEY)
                 || choices.contains("animations") || choices.contains("advanced_effects")
                 || choices.contains(Config.WALLPAPER_CHOICE_KEY) || choices.contains(Config.DOCK_OPACITY_KEY)
-                || choices.contains(Config.CLOCK_FORMAT_KEY) || choices.contains(OpenOnStart.KEY);
+                || choices.contains(Config.CLOCK_FORMAT_KEY) || choices.contains(Config.TILE_STYLE_KEY) || choices.contains(Config.NAMES_KEY) || choices.contains(Config.FIXED_DOCK_KEY) || choices.contains(Config.BACKDROP_KEY)
+                || choices.contains(OpenOnStart.KEY);
     }
 
     private void open(Intent intent) {
         try {
+            openingPage = true;
             startActivity(intent);
         } catch (ActivityNotFoundException | SecurityException e) {
             Toast.makeText(this, R.string.not_available, Toast.LENGTH_LONG).show();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        openingPage = false;
+    }
+
+    /** Leaving without Save (Back, or the remote's Home button) puts every choice back as it was. */
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (saved || openingPage || snapshot == null) return;
+        SharedPreferences.Editor e = choices.edit().clear();
+        for (java.util.Map.Entry<String, ?> en : snapshot.entrySet()) {
+            Object v = en.getValue();
+            if (v instanceof Boolean) e.putBoolean(en.getKey(), (Boolean) v);
+            else if (v instanceof Integer) e.putInt(en.getKey(), (Integer) v);
+            else if (v instanceof Long) e.putLong(en.getKey(), (Long) v);
+            else if (v instanceof Float) e.putFloat(en.getKey(), (Float) v);
+            else if (v instanceof String) e.putString(en.getKey(), (String) v);
+            else if (v instanceof java.util.Set) {
+                @SuppressWarnings("unchecked") java.util.Set<String> s = (java.util.Set<String>) v;
+                e.putStringSet(en.getKey(), s);
+            }
+        }
+        e.commit();
+        setResult(RESULT_CANCELED);
     }
 }

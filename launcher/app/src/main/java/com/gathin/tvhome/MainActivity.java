@@ -646,12 +646,24 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     int left = child.getLeft();
                     int right = child.getRight();
                     int dx;
-                    if (left < getPaddingLeft()) dx = left - getPaddingLeft();
+                    if (!rtlAppGrid) {
+                        // Paged: the row shows one batch of COLUMNS apps at a time, the batch's first cell on the
+                        // padding line, so the dock stays at the bottom and Down swaps in the next batch.
+                        int cell = child.getWidth();
+                        dx = left - (getPosition(child) % COLUMNS) * cell - getPaddingLeft();
+                    } else if (left < getPaddingLeft()) dx = left - getPaddingLeft();
                     else if (right > getWidth() - getPaddingRight()) dx = right - (getWidth() - getPaddingRight());
                     else dx = 0;
                     if (dx == 0) return false;
-                    if (immediate || reducedMotion || !animations) parent.scrollBy(dx, 0);
-                    else parent.smoothScrollBy(dx, 0);
+                    if (immediate || reducedMotion || !animations) {
+                        parent.scrollBy(dx, 0);
+                    } else {
+                        // The old batch fades into the background and the new one rises in its place.
+                        parent.animate().cancel();
+                        parent.setAlpha(0f);
+                        parent.scrollBy(dx, 0);
+                        parent.animate().alpha(1f).setDuration(320).start();
+                    }
                     return true;
                 }
                 if (dockRow && getPosition(child) < COLUMNS) return false;
@@ -690,6 +702,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         });
         if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames, cfg.dockOpacity, cfg.dockGlass, cfg.dockEvenPadding, cfg.dockBand,
                 singleRow, cfg.dockBandAll));
+        if (singleRow && !rtlAppGrid) {
+            // Paged row: room after the last app so a short last batch can still start on the padding line.
+            grid.addItemDecoration(new RecyclerView.ItemDecoration() {
+                @Override
+                public void getItemOffsets(@NonNull Rect out, @NonNull View view, @NonNull RecyclerView parent,
+                                           @NonNull RecyclerView.State state) {
+                    int pos = parent.getChildAdapterPosition(view);
+                    int n = state.getItemCount();
+                    if (pos == RecyclerView.NO_POSITION || pos != n - 1 || n % COLUMNS == 0) return;
+                    int cell = (parent.getWidth() - parent.getPaddingLeft() - parent.getPaddingRight()) / COLUMNS;
+                    out.right = (COLUMNS - n % COLUMNS) * cell;
+                }
+            });
+        }
         if (cfg.fadeRows) TopFade.attach(grid, 48 * density);
         // Reduced motion: the tiles are simply there, with no entrance (reloadApps skips it there too).
         if (animations && !reducedMotion) {
@@ -822,7 +848,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
-        btnWifi.setOnClickListener(v -> openNetworkPill());
+        btnWifi.setOnClickListener(v -> showConnectionsMenu());
         btnVpn.setOnClickListener(v -> openVpnPill());
         btnWifi.setOnLongClickListener(v -> {
             open(systemIntent(Settings.ACTION_WIFI_SETTINGS));
@@ -836,7 +862,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnSettings.setOnClickListener(v -> {
             if (launcherSettingsButton) startActivityForResult(
                     new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST);
-            else open(systemIntent(Settings.ACTION_SETTINGS));
+            else showTvSettingsMenu();
         });
         btnReorder = findViewById(R.id.btnReorder);
         btnReorder.setOnClickListener(v -> toggleReorder());
@@ -2054,20 +2080,24 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             fadeHeroArt(420);
             return;
         }
-        Bitmap art = heroArtCache.get(key);
-        if (art == null) {
-            art = HeroArt.from(adapter.artworkAt(position));
-            if (art != null) heroArtCache.put(key, art);
-        }
+        // The app's artwork itself, unblurred: a private copy (changing a shared drawable's bounds would blank its
+        // tile), cropped to fill the screen when it is a wide banner, centred when it is only a square icon.
+        Drawable live = adapter.artworkAt(position);
+        Drawable art = live == null ? null
+                : live.getConstantState() != null ? live.getConstantState().newDrawable(getResources()).mutate() : live;
+        final ImageView.ScaleType scale = art != null && art.getIntrinsicWidth() > art.getIntrinsicHeight() * 1.2f
+                ? ImageView.ScaleType.CENTER_CROP : ImageView.ScaleType.FIT_CENTER;
         heroArtKey = key;
-        final Bitmap next = art;
+        final Drawable next = art;
         if (!animations || reducedMotion || heroArt.getAlpha() == 0f) {
-            heroArt.setImageBitmap(next);
+            heroArt.setScaleType(scale);
+            heroArt.setImageDrawable(next);
             fadeHeroArt(600);
             return;
         }
         heroArt.animate().alpha(0f).setDuration(140).withEndAction(() -> {
-            heroArt.setImageBitmap(next);
+            heroArt.setScaleType(scale);
+            heroArt.setImageDrawable(next);
             heroArt.animate().alpha(heroArtAlpha).setDuration(420).start();
         }).start();
     }
@@ -2210,9 +2240,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         hero.animate().cancel();
         ambient.animate().cancel();
         hero.setAlpha(0f);
-        heroArt.animate().cancel();
-        heroArt.setAlpha(0f);
         heroShown = false;
+        // Grid apps get the artwork backdrop too, so the screen keeps the selected app's colours.
+        if (cinematic && heroArtAlpha > 0f) {
+            showHeroArt(position);
+        } else {
+            heroArt.animate().cancel();
+            heroArt.setAlpha(0f);
+        }
         if (!ambientGlow) return;
         if (!animations || reducedMotion) {
             setAmbient(color);
@@ -2448,10 +2483,29 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (singleRow) {
             // One row: Up leaves for the top bar, Down has nowhere to go, and Left/Right walk the whole row,
             // stopping at its two ends (the default focus search scrolls the row to the next tile).
+            int last = adapter.focusablePosition(count - 1);
+            if (!rtlAppGrid) {
+                // Paged row: Up/Down swap the batch shown in the bottom row; Left/Right stay inside the batch.
+                int col = position % COLUMNS, pageStart = position - col;
+                if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                    if (pageStart == 0) return false;          // first batch (the dock): on up to the top bar
+                    target = position - COLUMNS;
+                } else if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (pageStart + COLUMNS > last) return true;   // already the last batch
+                    target = Math.min(position + COLUMNS, last);
+                } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    return col == COLUMNS - 1 || position >= last;
+                } else {
+                    return col == 0;
+                }
+                focusTile(target);
+                grid.playSoundEffect(keyCode == KeyEvent.KEYCODE_DPAD_UP
+                        ? SoundEffectConstants.NAVIGATION_UP : SoundEffectConstants.NAVIGATION_DOWN);
+                return true;
+            }
             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return false;
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) return true;
             boolean forward = rtlAppGrid ? keyCode == KeyEvent.KEYCODE_DPAD_LEFT : keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
-            int last = adapter.focusablePosition(count - 1);
             if (forward && position >= last) {
                 if (adapter.isLibraryAt(count)) focusLibrary();
                 return true;
@@ -3065,10 +3119,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         pill.setContentDescription(pill.getText());
         pill.setText(null);
         pill.setMaxWidth(Integer.MAX_VALUE);
-        int pad = Math.round(10 * density);
+        int pad = Math.round(6 * density);
         pill.setPaddingRelative(pad, 0, pad, 0);
         pill.setCompoundDrawablePadding(0);
-        pill.getLayoutParams().width = Math.round(42 * density);
+        pill.getLayoutParams().width = Math.round(34 * density);
     }
 
     // ---- festive skin ------------------------------------------------------------------------------
@@ -3154,6 +3208,77 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void openNetworkPill() {
         Intent i = vpnPill ? null : vpnAppIntent();
         open(i != null ? i : systemIntent(Settings.ACTION_WIFI_SETTINGS));
+    }
+
+    /** The Settings button: a clear glass dropdown with the TV settings' main pages, then Launcher settings. */
+    private void showTvSettingsMenu() {
+        View anchor = findViewById(R.id.btnSettings);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (300 * density));
+        Object[][] pages = {
+                {R.drawable.ic_wifi, R.string.tvs_network, Settings.ACTION_WIFI_SETTINGS},
+                {R.drawable.ic_account, R.string.tvs_accounts, Settings.ACTION_SYNC_SETTINGS},
+                {R.drawable.ic_apps, R.string.tvs_apps, Settings.ACTION_APPLICATION_SETTINGS},
+                {R.drawable.ic_picture, R.string.tvs_display, Settings.ACTION_DISPLAY_SETTINGS},
+                {R.drawable.ic_bluetooth, R.string.tvs_remotes, Settings.ACTION_BLUETOOTH_SETTINGS},
+                {R.drawable.ic_lock, R.string.tvs_privacy, Settings.ACTION_PRIVACY_SETTINGS},
+                {R.drawable.ic_accessibility, R.string.tvs_accessibility, Settings.ACTION_ACCESSIBILITY_SETTINGS},
+                {R.drawable.ic_settings, R.string.tvs_system, Settings.ACTION_DEVICE_INFO_SETTINGS},
+        };
+        for (Object[] p : pages) {
+            final String action = (String) p[2];
+            addInputRow(rows, popup, (Integer) p[0], getString((Integer) p[1]), -1, () -> open(systemIntent(action)));
+        }
+        addInputRow(rows, popup, R.drawable.ic_home_settings_pill, getString(R.string.launcher_settings), -1,
+                () -> startActivityForResult(new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST));
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max((int) (300 * density), Math.min(panel.getMeasuredWidth(), (int) (400 * density))));
+        dropIn(popup, panel, anchor, getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.START : Gravity.END);
+        rows.getChildAt(0).requestFocus();
+    }
+
+    /**
+     * The Connections button: a clear glass dropdown with Wi-Fi (and the network it is on), Ethernet and Bluetooth,
+     * each opening its page in the TV's settings.
+     */
+    private void showConnectionsMenu() {
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = glassPopup(panel, (int) (260 * density));
+        addInputRow(rows, popup, R.drawable.ic_wifi, getString(R.string.wifi), -1, this::openNetworkPill);
+        CharSequence network = wifiIconOnly ? btnWifi.getContentDescription() : btnWifi.getText();
+        if (!TextUtils.isEmpty(network) && !getString(R.string.wifi).contentEquals(network)) {
+            TextView status = rows.getChildAt(rows.getChildCount() - 1).findViewById(R.id.status);
+            status.setText(network);
+            status.setVisibility(View.VISIBLE);
+        }
+        addInputRow(rows, popup, R.drawable.ic_ethernet, getString(R.string.ethernet_label), -1,
+                () -> open(systemIntent(Settings.ACTION_WIFI_SETTINGS)));
+        if (ethernetConnected()) {
+            TextView status = rows.getChildAt(rows.getChildCount() - 1).findViewById(R.id.status);
+            status.setText(R.string.connected_label);
+            status.setVisibility(View.VISIBLE);
+        }
+        addInputRow(rows, popup, R.drawable.ic_bluetooth, getString(R.string.bluetooth_label), -1,
+                () -> open(systemIntent(Settings.ACTION_BLUETOOTH_SETTINGS)));
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max((int) (260 * density), Math.min(panel.getMeasuredWidth(), (int) (380 * density))));
+        dropIn(popup, panel, btnWifi, getResources().getBoolean(R.bool.rtl_menu_bar) ? Gravity.START : Gravity.END);
+        rows.getChildAt(0).requestFocus();
+    }
+
+    private boolean ethernetConnected() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        try {
+            for (Network n : cm.getAllNetworks()) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return true;
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return false;
     }
 
     /** vpn_app's launch intent, or null when none is set or it is not installed. */

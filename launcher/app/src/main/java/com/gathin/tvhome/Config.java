@@ -164,6 +164,18 @@ final class Config {
     final boolean libraryOkOpens;
     /** Icon on a card tinted from that icon, instead of the app's banner (config.xml uniform_tiles). */
     final boolean uniformTiles;
+    /** iOS-style app icon look: default (banners), tinted, clear or dark (config.xml / theme / on-TV tile_style). */
+    static final String TILE_STYLE_KEY = "tile_style";
+    static final String[] TILE_STYLES = {"default", "tinted", "clear", "dark"};
+    String tileStyle = "default";
+    /** On-TV choice: names under every tile (overrides always_show_names). */
+    static final String NAMES_KEY = "always_show_names";
+    /** On-TV choice: true keeps the dock fixed at the bottom (single_row paging), false lets the apps scroll up. */
+    static final String FIXED_DOCK_KEY = "fixed_dock";
+    /** On-TV choice: "app" fills the screen with the selected app's artwork, "wallpaper" shows the chosen wallpaper. */
+    static final String BACKDROP_KEY = "backdrop";
+    /** A "Launcher settings" tile as the last app (config.xml launcher_settings_tile). */
+    boolean launcherSettingsTile;
     /** Background colour behind everything, #RRGGBB; black unless a theme says otherwise. */
     final int backgroundColor;
     /** Time-of-day backdrop, 0 to 100 (config.xml, sky_intensity); 0 keeps the plain background. */
@@ -677,7 +689,7 @@ final class Config {
         // Unmounted storage looks like a theme reset; compare only once the file is readable.
         if (mounted) syncThemeChoices(choices, dir, file);
         int chosenColumns = choices.getInt("columns", columns);
-        if (chosenColumns >= 4 && chosenColumns <= 7) columns = chosenColumns;
+        if (chosenColumns >= 4 && chosenColumns <= 8) columns = chosenColumns;
         int chosenRows = choices.getInt(ROWS_BELOW_DOCK_KEY, rowsBelow);
         if (chosenRows >= 0 && chosenRows <= 3) rowsBelow = chosenRows;
         animations = choices.getBoolean("animations", animations);
@@ -692,6 +704,8 @@ final class Config {
         int dockOpacity = json == null ? 100 : integer(json, "dock_opacity", 100, 30, 100);
         dockOpacity = chosenDockOpacity(choices.getInt(DOCK_OPACITY_KEY, -1), dockOpacity);
         clockFormat = choices.getString(CLOCK_FORMAT_KEY, clockFormat);
+        alwaysShowNames = choices.getBoolean(NAMES_KEY, alwaysShowNames);
+        singleRow = choices.getBoolean(FIXED_DOCK_KEY, singleRow);
         String wallpaperOrder = json == null ? WallpaperRotation.ORDER_SHUFFLE
                 : string(json, "wallpaper_order", WallpaperRotation.ORDER_SHUFFLE);
         // An unknown order must not silently change how an existing collection rotates.
@@ -717,7 +731,9 @@ final class Config {
         Festival festival = json == null ? Festival.NONE : Festival.parse(festivalName(json),
                 string(json, "festival_until", ""), string(json, "greeting", ""), string(json, "accent_color", ""));
 
-        return new Config(dock, fillDock, hidden, libraryApps, libraryExcludedApps, liveTv, liveTvAction, liveTvInputId, packageMap(launchActions), packageMap(appLabels),
+        // Custom wallpaper chosen on the TV: no app artwork over it.
+        if ("wallpaper".equals(choices.getString(BACKDROP_KEY, "app"))) cinematicArt = 0;
+        Config built = new Config(dock, fillDock, hidden, libraryApps, libraryExcludedApps, liveTv, liveTvAction, liveTvInputId, packageMap(launchActions), packageMap(appLabels),
                 packageMap(appBanners), panelService, panelAction, panelExtra, coocaaSources, inputAction, inputSources, inputUriScheme, Math.max(1, columns),
                 Math.max(0, rowsBelow), animations, advancedEffects, shamsi, greetingName, moduleCards, reducedMotion, bootToLiveTv,
                 openOnStartChoice, dockTitle, dockRow, topMenu, launcherSettingsButton, reorderButton, showNetworkPill, showInputsPill,
@@ -733,6 +749,13 @@ final class Config {
                 dateBelowClock, vpnPill, locale, powerOnHomeAlways, inputsConnectedOnly, inputsCecStateOnly,
                 Math.max(0, Math.min(600, openOnStartNetworkWait)), openOnStartOnWake, iconOnlyVpn, clockFormat, backOpensClock, glowSnap,
                 settingsKeyClearTask);
+        String style = res.getString(R.string.tile_style).trim();
+        if (json != null) style = string(json, TILE_STYLE_KEY, style);
+        style = choices.getString(TILE_STYLE_KEY, style);
+        built.tileStyle = Arrays.asList(TILE_STYLES).contains(style) ? style : "default";
+        built.launcherSettingsTile = json == null ? res.getBoolean(R.bool.launcher_settings_tile)
+                : bool(json, "launcher_settings_tile", res.getBoolean(R.bool.launcher_settings_tile));
+        return built;
     }
 
     /**
@@ -776,12 +799,12 @@ final class Config {
             SharedPreferences.Editor editor = choices.edit();
             if (!"absent".equals(token)) editor.remove("columns").remove("animations")
                     .remove("advanced_effects").remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY)
-                    .remove(DOCK_OPACITY_KEY).remove(CLOCK_FORMAT_KEY);
+                    .remove(DOCK_OPACITY_KEY).remove(CLOCK_FORMAT_KEY).remove(TILE_STYLE_KEY).remove(NAMES_KEY).remove(FIXED_DOCK_KEY).remove(BACKDROP_KEY);
             editor.putString(THEME_SIGNATURE_KEY, signature).commit();
         } else if (!seen.equals(signature)) {
             choices.edit().remove("columns").remove("animations").remove("advanced_effects")
                     .remove(ROWS_BELOW_DOCK_KEY).remove(WALLPAPER_CHOICE_KEY).remove(DOCK_OPACITY_KEY)
-                    .remove(CLOCK_FORMAT_KEY).putString(THEME_SIGNATURE_KEY, signature).commit();
+                    .remove(CLOCK_FORMAT_KEY).remove(TILE_STYLE_KEY).remove(NAMES_KEY).remove(FIXED_DOCK_KEY).remove(BACKDROP_KEY).putString(THEME_SIGNATURE_KEY, signature).commit();
         }
     }
 

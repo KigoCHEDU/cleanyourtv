@@ -50,9 +50,41 @@
     <string name="home_settings_help">Select your original home to stop using CleanYourTV as Home, or CleanYourTV to switch back. The original launcher must be enabled and your TV must provide a home picker; use the restore script first if it was disabled.</string>
     <string name="launcher_settings">Launcher settings</string>
     <string name="native_settings">Native settings</string>
-    <string name="columns_label">Apps per row</string>
+    <string name="columns_label">Icon size (apps per row)</string>
     <string name="rows_below_dock_label">Rows below dock</string>
     <string name="dock_opacity_label">Dock band opacity</string>
+    <string name="tile_style_label" translatable="false">Icon style</string>
+    <string name="tile_style_default" translatable="false">Original</string>
+    <string name="tile_style_tinted" translatable="false">Tinted</string>
+    <string name="tile_style_clear" translatable="false">Clear</string>
+    <string name="tile_style_dark" translatable="false">Dark</string>
+    <string name="names_state" translatable="false">Names under apps: %1$s</string>
+    <string name="connections_label" translatable="false">Connections</string>
+    <string name="ethernet_label" translatable="false">Ethernet</string>
+    <string name="bluetooth_label" translatable="false">Bluetooth</string>
+    <string name="connected_label" translatable="false">Connected</string>
+    <string name="tvs_network" translatable="false">Network &amp; Internet</string>
+    <string name="tvs_accounts" translatable="false">Accounts &amp; profiles</string>
+    <string name="tvs_apps" translatable="false">Apps</string>
+    <string name="tvs_display" translatable="false">Display &amp; Sound</string>
+    <string name="tvs_remotes" translatable="false">Remotes &amp; Accessories</string>
+    <string name="tvs_privacy" translatable="false">Privacy</string>
+    <string name="tvs_accessibility" translatable="false">Accessibility</string>
+    <string name="tvs_system" translatable="false">System</string>
+    <string name="dock_mode_label" translatable="false">Dock</string>
+    <string name="dock_mode_fixed" translatable="false">Fixed at bottom</string>
+    <string name="dock_mode_scroll" translatable="false">Apps scroll up</string>
+    <string name="save_settings" translatable="false">Save launcher settings</string>
+    <string name="settings_saved" translatable="false">Launcher settings saved</string>
+    <string name="backdrop_label" translatable="false">Background</string>
+    <string name="backdrop_app" translatable="false">App artwork</string>
+    <string name="backdrop_wallpaper" translatable="false">Custom wallpaper</string>
+    <string name="wp_sources_title" translatable="false">Custom wallpaper</string>
+    <string name="wp_tv_wallpapers" translatable="false">TV wallpapers</string>
+    <string name="wp_pictures" translatable="false">Pictures on this TV (Downloads, USB)</string>
+    <string name="wp_google_images" translatable="false">Find on Google Images</string>
+    <string name="wp_google_drive" translatable="false">Open Google Drive</string>
+    <string name="wp_web_hint" translatable="false">Download a picture in the browser, then come back and choose Pictures on this TV.</string>
     <string name="wallpaper_label">Wallpaper</string>
     <string name="wallpaper_state">Wallpaper: %1$s</string>
     <string name="wallpaper_none">None</string>
